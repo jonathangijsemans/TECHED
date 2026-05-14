@@ -76,10 +76,10 @@
   <button id="muteBtn" aria-label="Toggle sound">&#x1F50A;</button>
   <div id="overlay">
     <h1>CUBE DASH</h1>
-    <p>Tap anywhere to jump. Avoid the spikes. Land on blocks.</p>
+    <p>Tap to jump. Tap again in the air for a double jump. Avoid the spikes.</p>
     <div class="row"><span>Best: <b id="bestOverlay">0 m</b></span></div>
     <button id="playBtn">PLAY</button>
-    <div class="hint">Hold to keep jumping on blocks</div>
+    <div class="hint">Hold to keep jumping when you land</div>
   </div>
 </div>
 <script>
@@ -325,18 +325,22 @@
       }, fade * 1000 + 50);
     }
 
-    function playJump() {
+    function playJump(air) {
       const c = ensure(); if (!c) return;
       const t = ac.currentTime;
-      const o = ac.createOscillator(); o.type = 'square';
+      const o = ac.createOscillator(); o.type = air ? 'sawtooth' : 'square';
       const g = ac.createGain();
-      o.frequency.setValueAtTime(420, t);
-      o.frequency.exponentialRampToValueAtTime(960, t + 0.09);
+      const startF = air ? 700 : 420;
+      const endF   = air ? 1500 : 960;
+      o.frequency.setValueAtTime(startF, t);
+      o.frequency.exponentialRampToValueAtTime(endF, t + (air ? 0.07 : 0.09));
       g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(0.35, t + 0.005);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
-      o.connect(g).connect(sfxGain);
-      o.start(t); o.stop(t + 0.14);
+      g.gain.exponentialRampToValueAtTime(air ? 0.28 : 0.35, t + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.001, t + (air ? 0.16 : 0.12));
+      o.connect(g);
+      g.connect(sfxGain);
+      if (air) g.connect(delay); // give the air jump a little tail
+      o.start(t); o.stop(t + 0.2);
     }
 
     function playLand() {
@@ -431,6 +435,7 @@
     x: 0, y: 0, size: 0,
     vy: 0, onGround: true, rot: 0,
     alive: true, holding: false,
+    jumpsUsed: 0, maxJumps: 2,
     trail: [],
   };
 
@@ -455,6 +460,7 @@
     player.onGround = true;
     player.rot = 0;
     player.alive = true;
+    player.jumpsUsed = 0;
     player.trail.length = 0;
     camX = 0;
     obstacles.length = 0;
@@ -500,21 +506,27 @@
 
   function tryJump() {
     if (!player.alive) return;
-    if (player.onGround) {
-      player.vy = JUMP_V;
-      player.onGround = false;
-      Audio.playJump();
-      for (let i = 0; i < 6; i++) {
-        particles.push({
-          x: player.x + player.size / 2,
-          y: player.y + player.size,
-          vx: (Math.random() - 0.5) * 120,
-          vy: Math.random() * -120,
-          life: 0.4 + Math.random() * 0.3,
-          age: 0,
-          c: '#c4ff3d',
-        });
-      }
+    if (player.jumpsUsed >= player.maxJumps) return;
+    const isAirJump = !player.onGround;
+    player.vy = JUMP_V * (isAirJump ? 0.92 : 1);
+    player.onGround = false;
+    player.jumpsUsed++;
+    Audio.playJump(isAirJump);
+    const burst = isAirJump ? 14 : 6;
+    for (let i = 0; i < burst; i++) {
+      const angle = isAirJump
+        ? (i / burst) * Math.PI * 2
+        : -Math.PI / 2 + (Math.random() - 0.5) * Math.PI;
+      const speed = isAirJump ? 220 : 140;
+      particles.push({
+        x: player.x + player.size / 2,
+        y: player.y + (isAirJump ? player.size / 2 : player.size),
+        vx: Math.cos(angle) * speed * (0.6 + Math.random() * 0.6),
+        vy: Math.sin(angle) * speed * (0.6 + Math.random() * 0.6) - (isAirJump ? 0 : 40),
+        life: 0.35 + Math.random() * 0.3,
+        age: 0,
+        c: isAirJump ? '#00e6ff' : '#c4ff3d',
+      });
     }
   }
 
@@ -646,6 +658,7 @@
       // landed from a jump this frame
       Audio.playLand();
     }
+    if (landed) player.jumpsUsed = 0;
     player.onGround = landed;
     if (landed) {
       // snap rotation to multiples of 90deg quickly
